@@ -276,6 +276,15 @@ func (m *MCPService) SetDashboardServerEnabled(name string, enabled bool) error 
 
 // setMcpServerEnabled is a helper that updates the enabled status of the MCP server in the DB.
 func (m *MCPService) setMcpServerEnabled(name string, enabled bool) error {
+	if m.registration != nil && m.registration.storage {
+		if err := m.registration.lock(context.Background()); err != nil {
+			return err
+		}
+		defer m.registration.unlock()
+		if err := m.registrationReady(context.Background(), name); err != nil {
+			return err
+		}
+	}
 	server, err := m.GetMcpServer(name)
 	if err != nil {
 		return err
@@ -283,9 +292,12 @@ func (m *MCPService) setMcpServerEnabled(name string, enabled bool) error {
 	if server.Enabled == enabled {
 		return nil
 	}
-	server.Enabled = enabled
-	if err := m.db.Save(server).Error; err != nil {
-		return fmt.Errorf("failed to set server %s enabled=%t: %w", name, enabled, err)
+	updated := m.db.Model(&model.McpServer{}).Where("id = ? AND name = ?", server.ID, name).Update("enabled", enabled)
+	if updated.Error != nil {
+		return fmt.Errorf("failed to set server %s enabled=%t: %w", name, enabled, updated.Error)
+	}
+	if updated.RowsAffected != 1 {
+		return fmt.Errorf("server %s no longer exists: %w", name, apierrors.ErrNotFound)
 	}
 	return nil
 }

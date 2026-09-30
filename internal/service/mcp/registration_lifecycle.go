@@ -352,8 +352,27 @@ func (m *MCPService) RegisterManagedMcpServer(ctx context.Context, input *types.
 
 func discoverManagedTools(ctx context.Context, c *client.Client) ([]protocol.Tool, error) {
 	caps := c.GetServerCapabilities()
-	if caps.Tools == nil || caps.Prompts != nil || caps.Resources != nil || caps.Tasks != nil || caps.Sampling != nil || caps.Elicitation != nil || caps.Roots != nil || caps.Completions != nil {
+	if caps.Tools == nil || caps.Tasks != nil || caps.Sampling != nil || caps.Elicitation != nil || caps.Roots != nil || caps.Completions != nil {
 		return nil, fmt.Errorf("registration contract requires tools-only capabilities: %w", apierrors.ErrInvalidInput)
+	}
+	if caps.Resources != nil {
+		if caps.Resources.Subscribe || caps.Resources.ListChanged {
+			return nil, fmt.Errorf("registration contract does not support active resources: %w", apierrors.ErrInvalidInput)
+		}
+		if err := requireInactiveInventory(ctx, c, "resources/list", "resources"); err != nil {
+			return nil, err
+		}
+		if err := requireInactiveInventory(ctx, c, "resources/templates/list", "resourceTemplates"); err != nil {
+			return nil, err
+		}
+	}
+	if caps.Prompts != nil {
+		if caps.Prompts.ListChanged {
+			return nil, fmt.Errorf("registration contract does not support active prompts: %w", apierrors.ErrInvalidInput)
+		}
+		if err := requireInactiveInventory(ctx, c, "prompts/list", "prompts"); err != nil {
+			return nil, err
+		}
 	}
 	result := []protocol.Tool{}
 	cursor := ""
