@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"syscall"
@@ -138,6 +139,15 @@ func isLoopbackURL(rawURL string) bool {
 
 // convertToolModelToMcpObject converts a tool model from the database to a mcp.Tool object
 func convertToolModelToMcpObject(t *model.Tool) (mcp.Tool, error) {
+	if len(t.Definition) > 0 {
+		tool, err := decodeManagedToolDefinition(t.Definition)
+		if err != nil {
+			return mcp.Tool{}, err
+		}
+		tool.Name = t.Name
+		tool.Description = t.Description
+		return tool, nil
+	}
 	mcpTool := mcp.Tool{
 		Name:        t.Name,
 		Description: t.Description,
@@ -273,7 +283,7 @@ func createHTTPMcpServerConn(
 	s *model.McpServer,
 	initReqTimeoutSec int,
 	useStoredUpstreamAuth bool,
-) (*client.Client, error) {
+) (resultClient *client.Client, resultErr error) {
 	conf, err := s.GetStreamableHTTPConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get streamable HTTP config for MCP server %s: %w", s.Name, err)
@@ -320,6 +330,14 @@ func createHTTPMcpServerConn(
 			return nil, fmt.Errorf("failed to create streamable HTTP client for MCP server: %w", err)
 		}
 	}
+
+	defer func() {
+		if resultErr != nil {
+			if err := c.Close(); err != nil {
+				resultErr = errors.Join(resultErr, &ConnectionCleanupError{Err: err})
+			}
+		}
+	}()
 
 	_, err = initializeHTTPClient(ctx, c, conf.URL, initReqTimeoutSec)
 	if err != nil {
@@ -373,6 +391,12 @@ func captureStdioServerStderr(name string, c *client.Client) {
 
 // runStdioServer runs a stdio MCP server and returns the client.
 func runStdioServer(ctx context.Context, s *model.McpServer, initReqTimeoutSec int) (*client.Client, error) {
+	return runStdioServerLifetime(ctx, s, initReqTimeoutSec, false)
+}
+func runRegistrationStdioServer(ctx context.Context, s *model.McpServer, initReqTimeoutSec int) (*client.Client, error) {
+	return runStdioServerLifetime(ctx, s, initReqTimeoutSec, true)
+}
+func runStdioServerLifetime(ctx context.Context, s *model.McpServer, initReqTimeoutSec int, requestLifetime bool) (resultClient *client.Client, resultErr error) {
 	conf, err := s.GetStdioConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stdio config for MCP server %s: %w", s.Name, err)
@@ -386,10 +410,38 @@ func runStdioServer(ctx context.Context, s *model.McpServer, initReqTimeoutSec i
 		}
 	}
 
-	c, err := client.NewStdioMCPClient(conf.Command, envVars, conf.Args...)
+	stdio := transport.NewStdioWithOptions(conf.Command, envVars, conf.Args, transport.WithCommandFunc(func(_ context.Context, command string, env, args []string) (*exec.Cmd, error) {
+		// Successful stateful sessions outlive one request; initialization cancellation closes explicitly.
+		cmd := exec.Command(command, args...)
+		if requestLifetime {
+			cmd = exec.CommandContext(ctx, command, args...)
+		}
+		cmd.Env = append(os.Environ(), env...)
+		return cmd, nil
+	}))
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	err = stdio.Start(ctx)
+	c := client.NewClient(stdio)
 	if err != nil {
+		_ = stdio.Close()
 		return nil, fmt.Errorf("failed to create stdio client for MCP server: %w", err)
 	}
+
+	closer, stopClose := closeOnContext(ctx, c)
+	defer func() {
+		stopped := stopClose()
+		if resultErr != nil || !stopped || ctx.Err() != nil {
+			if err := closer.close(); err != nil {
+				resultErr = errors.Join(resultErr, &ConnectionCleanupError{Err: err})
+			}
+			if resultErr == nil {
+				resultErr = ctx.Err()
+			}
+			resultClient = nil
+		}
+	}()
 
 	// currently, we only capture the stderr output in the mcpjungle server logs.
 	// TODO: Propagate the stderr output to the client as well to provide them quicker feedback on errors.
@@ -441,7 +493,7 @@ func createSSEMcpServerConn(
 	db *gorm.DB,
 	s *model.McpServer,
 	useStoredUpstreamAuth bool,
-) (*client.Client, error) {
+) (resultClient *client.Client, resultErr error) {
 	conf, err := s.GetSSEConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SSE transport config for MCP server %s: %w", s.Name, err)
@@ -494,6 +546,14 @@ func createSSEMcpServerConn(
 			return nil, fmt.Errorf("failed to create SSE client for MCP server: %w", err)
 		}
 	}
+
+	defer func() {
+		if resultErr != nil {
+			if err := c.Close(); err != nil {
+				resultErr = errors.Join(resultErr, &ConnectionCleanupError{Err: err})
+			}
+		}
+	}()
 
 	if err = c.Start(ctx); err != nil {
 		return nil, fmt.Errorf("failed to start SSE transport for MCP server: %w", err)

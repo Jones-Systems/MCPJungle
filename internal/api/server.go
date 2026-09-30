@@ -283,6 +283,8 @@ func (s *Server) setupRouter() (*gin.Engine, error) {
 	// endpoints only accessible by an admin user in enterprise mode or anyone in development mode
 	adminAPI := apiV0.Group("/", s.requireAdminUser())
 	{
+		adminAPI.GET("/capabilities", s.registrationCapabilitiesHandler())
+		adminAPI.POST("/servers/:name/resolve", s.resolveRegistrationHandler())
 		adminAPI.POST("/servers", s.registerServerHandler())
 		adminAPI.POST("/upstream_oauth/sessions/:id/complete", s.completeUpstreamOAuthSessionHandler())
 		adminAPI.DELETE("/servers/:name", s.deregisterServerHandler())

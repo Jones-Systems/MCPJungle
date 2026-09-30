@@ -40,5 +40,8 @@ func Migrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(&model.UpstreamOAuthToken{}); err != nil {
 		return fmt.Errorf("auto-migration failed for UpstreamOAuthToken model: %v", err)
 	}
+	if err := db.AutoMigrate(&model.RegistrationLifecycle{}); err != nil {
+		return fmt.Errorf("auto-migration failed for RegistrationLifecycle model: %v", err)
+	}
 	return nil
 }

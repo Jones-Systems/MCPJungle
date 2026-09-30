@@ -64,7 +64,16 @@ func (m *MCPService) finalizeMcpServerRegistration(ctx context.Context, s *model
 // also added to the MCP proxy server.
 //
 // This method assumes that any Oauth nuance is already handled and simply uses existing auth info.
-func (m *MCPService) registerMcpServer(ctx context.Context, s *model.McpServer, useStoredUpstreamAuth bool) error {
+func (m *MCPService) registerMcpServer(ctx context.Context, s *model.McpServer, useStoredUpstreamAuth bool) (resultErr error) {
+	definition, _ := registrationDefinitionFromServer(s)
+	ctx, worker, err := m.beginRegistration(ctx, s.Name, definition, false)
+	if err != nil {
+		return err
+	}
+	defer func() { m.finishRegistration(s.Name, worker, false, resultErr) }()
+	if err = m.acquireCreateSlot(ctx, worker); err != nil {
+		return err
+	}
 	if err := validateServerName(s.Name); err != nil {
 		return err
 	}
@@ -92,20 +101,25 @@ func (m *MCPService) registerMcpServer(ctx context.Context, s *model.McpServer, 
 		}
 	}
 
-	mcpClient, err := createMcpServerConnectionWithDB(
-		ctx,
-		m.db,
-		s,
-		m.mcpServerInitReqTimeoutSec,
-		useStoredUpstreamAuth,
-	)
+	mcpClient, err := m.createRegistrationConnection(ctx, s, useStoredUpstreamAuth)
 	if err != nil {
+		var cleanup *ConnectionCleanupError
+		if errors.As(err, &cleanup) {
+			worker.cleanupErr = cleanup
+		}
 		return err
 	}
-	defer mcpClient.Close()
+	closer, stopClose := closeOnContext(ctx, mcpClient)
+	defer stopClose()
+	defer func() {
+		if closeErr := closer.close(); closeErr != nil {
+			worker.cleanupErr = closeErr
+			resultErr = errors.Join(resultErr, &ConnectionCleanupError{Err: closeErr})
+		}
+	}()
 
-	// register the server in the DB
-	if err := m.db.Create(s).Error; err != nil {
+	// Serialize the visible row with resolve fences; discovery still uses the request deadline.
+	if err := m.withRegistrationPublication(ctx, s.Name, func() error { return m.db.WithContext(ctx).Create(s).Error }); err != nil {
 		return fmt.Errorf("failed to register mcp server: %w", err)
 	}
 
@@ -134,6 +148,10 @@ func (m *MCPService) registerMcpServer(ctx context.Context, s *model.McpServer, 
 // Deregistered tools, prompts and resources are also removed from the MCP proxy server.
 // Any stateful sessions associated with this server are also closed.
 func (m *MCPService) DeregisterMcpServer(name string) error {
+	return m.DeregisterMcpServerContext(context.Background(), name)
+}
+
+func (m *MCPService) deregisterLegacyMcpServer(name string) error {
 	s, err := m.GetMcpServer(name)
 	if err != nil {
 		return fmt.Errorf("failed to get MCP server %s from DB: %w", name, err)

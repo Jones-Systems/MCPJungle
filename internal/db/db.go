@@ -47,6 +47,9 @@ func resolveSQLiteDBPath(configuredPath string) string {
 	return getSQLiteDBPath()
 }
 
+// ResolveSQLiteDBPath binds startup's lifetime guard to the same file used by the database.
+func ResolveSQLiteDBPath(configuredPath string) string { return resolveSQLiteDBPath(configuredPath) }
+
 // NewDBConnection creates a new database connection based on the provided DSN.
 // If the DSN is empty, it falls back to an embedded SQLite database.
 // For backward compatibility, it will use an existing "mcp.db" file if present,
@@ -56,7 +59,7 @@ func NewDBConnection(dsn string, sqliteDBPath string) (*gorm.DB, error) {
 	if dsn == "" {
 		dbPath := resolveSQLiteDBPath(sqliteDBPath)
 		log.Printf("[db] Using sqlite database at %s", dbPath)
-		dialector = sqlite.Open(fmt.Sprintf("%s?_busy_timeout=5000&_journal_mode=WAL", dbPath))
+		dialector = sqlite.Open(fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)", dbPath))
 	} else {
 		log.Printf("[db] Using postgres database")
 		dialector = postgres.Open(dsn)

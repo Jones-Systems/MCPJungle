@@ -277,36 +277,37 @@ func (m *MCPService) registerServerPrompts(ctx context.Context, s *model.McpServ
 	if err != nil {
 		return fmt.Errorf("failed to fetch prompts from MCP server %s: %w", s.Name, err)
 	}
-	for _, prompt := range resp.Prompts {
-		canonicalPromptName := mergeServerPromptNames(s.Name, prompt.GetName())
+	return m.withRegistrationPublication(ctx, s.Name, func() error {
+		for _, prompt := range resp.Prompts {
+			canonicalPromptName := mergeServerPromptNames(s.Name, prompt.GetName())
 
-		// extracting json schema is currently on best-effort basis
-		// if it fails, we log the error and continue with the next prompt
-		jsonArguments, _ := json.Marshal(prompt.Arguments)
+			// Legacy registration keeps argument serialization best-effort.
+			jsonArguments, _ := json.Marshal(prompt.Arguments)
 
-		p := &model.Prompt{
-			ServerID:    s.ID,
-			Name:        prompt.GetName(),
-			Description: prompt.Description,
-			Arguments:   jsonArguments,
-		}
-		if err := m.db.Create(p).Error; err != nil {
-			// If registration of a prompt fails, we should not fail the entire server registration.
-			// Instead, continue with the next prompt.
-			log.Printf("[ERROR] failed to register prompt %s in DB: %v", canonicalPromptName, err)
-		} else {
-			// Set prompt name to include the server name prefix to make it recognizable by MCPJungle
-			// then add the prompt to the MCP proxy server
-			prompt.Name = canonicalPromptName
-
-			if s.Transport == types.TransportSSE {
-				m.sseMcpProxyServer.AddPrompt(prompt, m.mcpProxyPromptHandler)
+			p := &model.Prompt{
+				ServerID:    s.ID,
+				Name:        prompt.GetName(),
+				Description: prompt.Description,
+				Arguments:   jsonArguments,
+			}
+			if err := m.db.Create(p).Error; err != nil {
+				// If registration of a prompt fails, we should not fail the entire server registration.
+				// Instead, continue with the next prompt.
+				log.Printf("[ERROR] failed to register prompt %s in DB: %v", canonicalPromptName, err)
 			} else {
-				m.mcpProxyServer.AddPrompt(prompt, m.mcpProxyPromptHandler)
+				// Set prompt name to include the server name prefix to make it recognizable by MCPJungle
+				// then add the prompt to the MCP proxy server
+				prompt.Name = canonicalPromptName
+
+				if s.Transport == types.TransportSSE {
+					m.sseMcpProxyServer.AddPrompt(prompt, m.mcpProxyPromptHandler)
+				} else {
+					m.mcpProxyServer.AddPrompt(prompt, m.mcpProxyPromptHandler)
+				}
 			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // deregisterServerPrompts deletes all prompts that belong to an MCP server from the DB.

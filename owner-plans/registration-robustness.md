@@ -39,6 +39,10 @@ Durably retire each exact managed name; prevent later publication/launch; bound 
 
 Contract 1 uses the existing unique registration name for one creation lifetime. Names are never reused after retirement. Journals remain v2. Capability is opt-in through `gateway_registration_contract: 1` and a validated gateway response.
 
+Absent or 0 retains legacy behavior. Explicit 1 requires valid advertised contract 1; missing, invalid, unavailable or downgraded capability fails before POST without fallback. Preserve old uncertainty and clean only this attempt's proved pre-submit ownership.
+
+One gateway-owned create slot covers both legacy and managed discovery, client closure, DB/proxy publication and final worker outcome. Waiting consumes the whole registration deadline and is cancellable; a cancelled waiter cannot launch later. Resolve and unrelated cleanup never acquire the slot. Capability 1 requires it. Mixed versions serialize gateway creation while HTTP/readbacks may overlap; old client-lock behavior is not guaranteed. Test concurrent old/new maximum active creation one, cancelled waiter no launch and unrelated confirmed cleanup during negotiated POST.
+
 `GET /api/v0/capabilities` returns `{"registration_contract":1,"registration_deadline_seconds":45,"registration_resolve_deadline_seconds":50}` only when durable lifecycle storage, readiness/publication guards and the lifetime single-writer guard work. Otherwise return `{"registration_contract":0}`. Use the existing management authorization boundary.
 
 Initially enable only SQLite/Linux. Acquire one lifetime advisory lock for the exact database before serving. Hold until registration workers drain; failed drain must not release while workers remain alive. Activation separately proves the old binary stopped, since it does not participate in this lock.
@@ -52,6 +56,8 @@ Normalize typed definitions: exact valid name, stdio transport, nonempty absolut
 Managed DELETE preserves existing interface, permanently fences, drains discovery/publication and completes exact cleanup before success. Tombstones never expire or disappear through DELETE. A legacy create cannot bypass an existing tombstone. Adapter uncertainty resolution must validate any present definition with fresh GET, delete, then obtain fresh absence. GET absence alone never proves termination.
 
 One additive lifecycle table keyed by name binds normalized definition, managed row identity, minimal creation/readiness/fenced state. Discover into memory, transactionally commit all required entities, publish in batches behind readiness guards. Conversion/insertion failures abort managed publication. Before listening on restart fence unfinished work and remove/reconcile incomplete managed rows, reconstruct ready catalogs from rows without rediscovery, exclude incomplete tools from listing/invocation. Request context, whole 45-second lifecycle deadline, resolve and shutdown cancellation all apply; never detach discovery to Background. Preserve HTTP/OAuth/session interfaces. No general session-manager queue redesign.
+
+Persist complete SDK-supported managed tool JSON in one additive tool-definition column so metadata/output schemas/titles survive ready publication and restart. Preserve established conversion for legacy rows. Qualify additive migration/downgrade on disposable databases; shared migration remains separately approved.
 <!-- codex-section:end id="spec.mcpjungle-gateway-robustness#iface.gateway-contract.001" -->
 
 <!-- codex-section:begin id="spec.mcpjungle-gateway-robustness#dec.source.001" -->
