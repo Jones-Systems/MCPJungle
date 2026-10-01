@@ -53,7 +53,7 @@ An advertised inactive resource/prompt placeholder is compatible only after same
 
 Normalize typed definitions: exact valid name, stdio transport, nonempty absolute command, args omitted/null to ordered string array [], env omitted/null to string map {}, session_mode omitted/empty to stateless or explicit stateful/stateless, description omitted to empty. Reject duplicate JSON keys, unsupported fields and invalid types. Exact strings/array order matter, map order does not; do not normalize paths/Unicode or equate Go JSON with the adapter's local SHA256.
 
-`POST /api/v0/servers/{name}/resolve` body is `{"registration": <exact definition>}`. Validate normalized definition, install durable fence, cancel/drain the name's worker, serialize with publication, establish frozen visible state. Unknown absent names must acquire durable tombstones before returning. Success is `200 {"registration_contract":1,"name":<name>,"outcome":"present"|"absent","terminal":true}`. It guarantees no later publication for that name. Present permits exact cleanup, never adoption. Timeout, cleanup failure, conflicting state or persistence failure gives non-200 and no terminal receipt. Repeating resolve safely reconciles a lost response.
+`POST /api/v0/servers/{name}/resolve` body is `{"registration": <exact definition>}`. Validate normalized definition, install durable fence, cancel/drain the name's worker, serialize with publication, establish frozen visible state. Unknown absent names must acquire durable tombstones before returning. Success is `200 {"registration_contract":1,"name":<name>,"outcome":"present"|"absent","terminal":true}`. It guarantees no later publication for that name. Legacy prompt/resource single and bulk enabled-state writers share the retirement/readiness gate and persist with identity-bound UPDATE only, preventing post-terminal re-enable and stale Save insertion. Present permits exact cleanup, never adoption. Timeout, cleanup failure, conflicting state or persistence failure gives non-200 and no terminal receipt. Repeating resolve safely reconciles a lost response.
 
 Managed DELETE preserves existing interface, permanently fences, drains discovery/publication and completes exact cleanup before success. Tombstones never expire or disappear through DELETE. A legacy create cannot bypass an existing tombstone. Adapter uncertainty resolution must validate any present definition with fresh GET, delete, then obtain fresh absence. GET absence alone never proves termination.
 
@@ -130,7 +130,7 @@ Root is sole Git owner. Builders are not alone and may edit only their machine t
   "additional_final_check_groups": [
     "gateway-lifecycle"
   ],
-  "delivery_boundary": "Source implementation and isolated qualification only; live activation requires exact envelope. No PR publication."
+  "delivery_boundary": "Source implementation, isolated qualification and owner-authorized source PR publication/merge; installation and live activation require separate exact approval."
 }
 ```
 <!-- codex-section:end id="spec.mcpjungle-gateway-robustness#plan.implementation.001" -->

@@ -10,6 +10,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -312,7 +313,7 @@ func TestPrepareSHTTPClientOptions_BearerWithCustomAuthorization(t *testing.T) {
 		},
 	}
 
-	var buf bytes.Buffer
+	var buf synchronizedLogBuffer
 	old := log.Writer()
 	log.SetOutput(&buf)
 	defer log.SetOutput(old)
@@ -328,7 +329,24 @@ func TestPrepareSHTTPClientOptions_BearerWithCustomAuthorization(t *testing.T) {
 	}
 }
 
-func waitForLogMessage(t *testing.T, buf *bytes.Buffer, want string) {
+type synchronizedLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *synchronizedLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *synchronizedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func waitForLogMessage(t *testing.T, buf *synchronizedLogBuffer, want string) {
 	t.Helper()
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -368,7 +386,7 @@ func newTestStdioClient(t *testing.T) (*client.Client, *os.File, *os.File) {
 func TestCaptureStdioServerStderr_LogsGracefulExitOnEOF(t *testing.T) {
 	c, _, stderrWriter := newTestStdioClient(t)
 
-	var buf bytes.Buffer
+	var buf synchronizedLogBuffer
 	old := log.Writer()
 	log.SetOutput(&buf)
 	defer log.SetOutput(old)
@@ -382,7 +400,7 @@ func TestCaptureStdioServerStderr_LogsGracefulExitOnEOF(t *testing.T) {
 func TestCaptureStdioServerStderr_LogsClientShutdownOnClosedPipe(t *testing.T) {
 	c, stderrReader, _ := newTestStdioClient(t)
 
-	var buf bytes.Buffer
+	var buf synchronizedLogBuffer
 	old := log.Writer()
 	log.SetOutput(&buf)
 	defer log.SetOutput(old)
