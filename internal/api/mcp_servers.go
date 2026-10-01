@@ -16,6 +16,14 @@ import (
 
 func (s *Server) registerServerHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if contract, present := c.GetQuery("registration_contract"); present {
+			if contract != "1" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported registration_contract"})
+				return
+			}
+			s.registerManagedServer(c)
+			return
+		}
 		force, err := parseForceQueryParam(c)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -61,7 +69,7 @@ func (s *Server) registerServerHandler() gin.HandlerFunc {
 			}
 		}
 
-		if err := s.mcpService.RegisterMcpServerWithOAuthSupport(c, &input, server, force, initiatedBy); err != nil {
+		if err := s.mcpService.RegisterMcpServerWithOAuthSupport(c.Request.Context(), &input, server, force, initiatedBy); err != nil {
 			var oauthErr *mcp.UpstreamOAuthAuthorizationPendingError
 			if errors.As(err, &oauthErr) {
 				// registration failed because upstream server requires OAuth authorization.
@@ -118,7 +126,7 @@ func (s *Server) completeUpstreamOAuthSessionHandler() gin.HandlerFunc {
 			return
 		}
 
-		server, err := s.mcpService.CompleteUpstreamOAuthSession(c, sessionID, input.Code, input.State)
+		server, err := s.mcpService.CompleteUpstreamOAuthSession(c.Request.Context(), sessionID, input.Code, input.State)
 		if err != nil {
 			handleServiceError(c, err)
 			return
@@ -159,7 +167,7 @@ func (s *Server) deregisterServerHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("name")
 
-		if err := s.mcpService.DeregisterMcpServer(name); err != nil {
+		if err := s.mcpService.DeregisterMcpServerContext(c.Request.Context(), name); err != nil {
 			handleServiceError(c, err)
 			return
 		}

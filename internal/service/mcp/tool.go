@@ -33,7 +33,7 @@ type ToolAdditionCallback func(toolName string) error
 // its name will be set to "git__commit".
 func (m *MCPService) ListTools() ([]model.Tool, error) {
 	var tools []model.Tool
-	if err := m.db.Find(&tools).Error; err != nil {
+	if err := m.visibleToolsQuery(m.db).Find(&tools).Error; err != nil {
 		return nil, err
 	}
 	// prepend server name to tool names to ensure we only return the unique names of tools to user
@@ -59,7 +59,7 @@ func (m *MCPService) ListToolsByServer(name string) ([]model.Tool, error) {
 	}
 
 	var tools []model.Tool
-	if err := m.db.Where("server_id = ?", s.ID).Find(&tools).Error; err != nil {
+	if err := m.visibleToolsQuery(m.db).Where("server_id = ?", s.ID).Find(&tools).Error; err != nil {
 		return nil, fmt.Errorf("failed to get tools for server %s from DB: %w", name, err)
 	}
 
@@ -72,6 +72,10 @@ func (m *MCPService) ListToolsByServer(name string) ([]model.Tool, error) {
 }
 
 func (m *MCPService) GetTool(name string) (*model.Tool, error) {
+	serverNameForReady, _, _ := splitServerToolName(name)
+	if err := m.registrationReady(context.Background(), serverNameForReady); err != nil {
+		return nil, err
+	}
 	serverName, toolName, ok := splitServerToolName(name)
 	if !ok {
 		return nil, fmt.Errorf("tool name does not contain a %s separator: %w", serverToolNameSep, apierrors.ErrInvalidInput)
@@ -97,6 +101,10 @@ func (m *MCPService) GetTool(name string) (*model.Tool, error) {
 // GetToolInstance returns the in-memory mcp.Tool instance for the given tool name.
 // Returns the tool instance and a boolean indicating if it was found.
 func (m *MCPService) GetToolInstance(name string) (mcp.Tool, bool) {
+	serverName, _, _ := splitServerToolName(name)
+	if m.registrationReady(context.Background(), serverName) != nil {
+		return mcp.Tool{}, false
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	tool, exists := m.toolInstances[name]
@@ -208,6 +216,19 @@ func (m *MCPService) DisableTools(entity string) ([]string, error) {
 // If entity is a tool name, only that tool is enabled/disabled.
 // If entity is a server name, all tools of that server are enabled/disabled.
 func (m *MCPService) setToolsEnabled(entity string, enabled bool) ([]string, error) {
+	name, _, okName := splitServerToolName(entity)
+	if !okName {
+		name = entity
+	}
+	if m.registration != nil && m.registration.storage {
+		if err := m.registration.lock(context.Background()); err != nil {
+			return nil, err
+		}
+		defer m.registration.unlock()
+		if err := m.registrationReady(context.Background(), name); err != nil {
+			return nil, err
+		}
+	}
 	serverName, toolName, ok := splitServerToolName(entity)
 	if ok {
 		// splitting was successful, so the entity is a tool name
@@ -278,7 +299,7 @@ func (m *MCPService) setToolsEnabled(entity string, enabled bool) ([]string, err
 	}
 
 	var tools []model.Tool
-	if err := m.db.Where("server_id = ?", s.ID).Find(&tools).Error; err != nil {
+	if err := m.visibleToolsQuery(m.db).Where("server_id = ?", s.ID).Find(&tools).Error; err != nil {
 		return nil, fmt.Errorf("failed to get tools for server %s: %w", entity, err)
 	}
 
@@ -333,46 +354,47 @@ func (m *MCPService) registerServerTools(ctx context.Context, s *model.McpServer
 	if err != nil {
 		return fmt.Errorf("failed to fetch tools from MCP server %s: %w", s.Name, err)
 	}
-	for _, tool := range resp.Tools {
-		canonicalToolName := mergeServerToolNames(s.Name, tool.GetName())
+	return m.withRegistrationPublication(ctx, s.Name, func() error {
+		for _, tool := range resp.Tools {
+			canonicalToolName := mergeServerToolNames(s.Name, tool.GetName())
 
-		// extracting json schema is currently on best-effort basis
-		// if it fails, we log the error and continue with the next tool
-		jsonSchema, _ := json.Marshal(tool.InputSchema)
+			// Legacy registration keeps input schema serialization best-effort.
+			jsonSchema, _ := json.Marshal(tool.InputSchema)
 
-		// extracting annotations is also on best-effort basis
-		annotationsJSON, _ := json.Marshal(tool.Annotations)
+			// extracting annotations is also on best-effort basis
+			annotationsJSON, _ := json.Marshal(tool.Annotations)
 
-		t := &model.Tool{
-			ServerID:    s.ID,
-			Name:        tool.GetName(),
-			Description: tool.Description,
-			InputSchema: jsonSchema,
-			Annotations: annotationsJSON,
+			t := &model.Tool{
+				ServerID:    s.ID,
+				Name:        tool.GetName(),
+				Description: tool.Description,
+				InputSchema: jsonSchema,
+				Annotations: annotationsJSON,
+			}
+			if err := m.db.Create(t).Error; err != nil {
+				// If registration of a tool fails, we should not fail the entire server registration.
+				// Instead, continue with the next tool.
+				log.Printf("[ERROR] failed to register tool %s in DB: %v", canonicalToolName, err)
+				continue
+			}
+
+			// Set tool name to include the server name prefix to make it recognizable by MCPJungle
+			// then add the tool to the appropriate MCP proxy server
+			tool.Name = canonicalToolName
+
+			if s.Transport == types.TransportSSE {
+				m.sseMcpProxyServer.AddTool(tool, m.MCPProxyToolCallHandler)
+			} else {
+				m.mcpProxyServer.AddTool(tool, m.MCPProxyToolCallHandler)
+			}
+
+			// also add the tool to the in-memory tool instance tracker
+			m.addToolInstance(tool)
+			// notify any registered callbacks about the tool addition
+			m.notifyToolAddition(tool.Name)
 		}
-		if err := m.db.Create(t).Error; err != nil {
-			// If registration of a tool fails, we should not fail the entire server registration.
-			// Instead, continue with the next tool.
-			log.Printf("[ERROR] failed to register tool %s in DB: %v", canonicalToolName, err)
-			continue
-		}
-
-		// Set tool name to include the server name prefix to make it recognizable by MCPJungle
-		// then add the tool to the appropriate MCP proxy server
-		tool.Name = canonicalToolName
-
-		if s.Transport == types.TransportSSE {
-			m.sseMcpProxyServer.AddTool(tool, m.MCPProxyToolCallHandler)
-		} else {
-			m.mcpProxyServer.AddTool(tool, m.MCPProxyToolCallHandler)
-		}
-
-		// also add the tool to the in-memory tool instance tracker
-		m.addToolInstance(tool)
-		// notify any registered callbacks about the tool addition
-		m.notifyToolAddition(tool.Name)
-	}
-	return nil
+		return nil
+	})
 }
 
 // deregisterServerTools deletes all tools that belong to an MCP server from the DB.

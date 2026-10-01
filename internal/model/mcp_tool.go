@@ -21,6 +21,9 @@ type Tool struct {
 
 	Description string `json:"description"`
 
+	// Definition preserves the complete discovered MCP tool; older rows use the individual fields.
+	Definition datatypes.JSON `json:"-" gorm:"type:jsonb"`
+
 	// InputSchema is a JSON schema that describes the input parameters for the tool.
 	InputSchema datatypes.JSON `json:"input_schema" gorm:"type:jsonb"`
 

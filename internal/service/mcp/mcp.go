@@ -2,8 +2,10 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -14,6 +16,9 @@ import (
 // ServiceConfig holds the configuration parameters for initializing the MCPService.
 type ServiceConfig struct {
 	DB *gorm.DB
+
+	// RegistrationSingleWriter is proof supplied by the lifetime database guard.
+	RegistrationSingleWriter bool
 
 	McpProxyServer    *server.MCPServer
 	SseMcpProxyServer *server.MCPServer
@@ -30,7 +35,8 @@ type ServiceConfig struct {
 // MCPService coordinates operations amongst the registry database, mcp proxy server and upstream MCP servers.
 // It is responsible for maintaining data consistency and providing a unified interface for MCP operations.
 type MCPService struct {
-	db *gorm.DB
+	db           *gorm.DB
+	registration *registrationCoordinator
 
 	mcpProxyServer    *server.MCPServer
 	sseMcpProxyServer *server.MCPServer
@@ -95,6 +101,10 @@ func NewMCPService(c *ServiceConfig) (*MCPService, error) {
 		mcpServerInitReqTimeoutSec: c.McpServerInitReqTimeout,
 
 		sessionManager: sessionManager,
+		registration:   newRegistrationCoordinator(c),
+	}
+	if err := s.reconcileRegistrations(); err != nil {
+		return nil, err
 	}
 	if err := s.initMCPProxyServer(); err != nil {
 		return nil, fmt.Errorf("failed to initialize MCP proxy server: %w", err)
@@ -102,8 +112,13 @@ func NewMCPService(c *ServiceConfig) (*MCPService, error) {
 	return s, nil
 }
 
-// Shutdown gracefully shuts down the MCP service, closing all stateful sessions.
+// Shutdown closes stateful sessions only after registration workers drain successfully.
 func (m *MCPService) Shutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+	defer cancel()
+	if err := m.ShutdownRegistrations(ctx); err != nil {
+		return
+	}
 	if m.sessionManager != nil {
 		m.sessionManager.Shutdown()
 	}

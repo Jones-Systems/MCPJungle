@@ -440,7 +440,18 @@ func runStartServer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	dbConn, err := db.NewDBConnection(dsn, getSQLiteDBPathOverride())
+	sqlitePath := db.ResolveSQLiteDBPath(getSQLiteDBPathOverride())
+	guard, err := acquireRegistrationGuard(dsn, sqlitePath)
+	if err != nil {
+		return err
+	}
+	releaseGuard := true
+	defer func() {
+		if guard != nil && releaseGuard {
+			_ = guard.close()
+		}
+	}()
+	dbConn, err := db.NewDBConnection(dsn, sqlitePath)
 	if err != nil {
 		return err
 	}
@@ -451,6 +462,11 @@ func runStartServer(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to run migrations: %v", err)
 	}
 
+	if guard != nil {
+		if err := guard.verify(sqlitePath); err != nil {
+			return err
+		}
+	}
 	bindPort := getBindPort()
 	bindAddr := net.JoinHostPort(getBindHost(cmd), bindPort)
 
@@ -480,18 +496,32 @@ func runStartServer(cmd *cobra.Command, args []string) error {
 	})
 
 	mcpServiceConfig := &mcp.ServiceConfig{
-		DB:                      dbConn,
-		McpProxyServer:          mcpProxyServer,
-		SseMcpProxyServer:       sseMcpProxyServer,
-		Metrics:                 mcpMetrics,
-		McpServerInitReqTimeout: timeout,
-		SessionManager:          sessionManager,
+		DB:                       dbConn,
+		RegistrationSingleWriter: guard != nil,
+		McpProxyServer:           mcpProxyServer,
+		SseMcpProxyServer:        sseMcpProxyServer,
+		Metrics:                  mcpMetrics,
+		McpServerInitReqTimeout:  timeout,
+		SessionManager:           sessionManager,
 	}
 	mcpService, err := mcp.NewMCPService(mcpServiceConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create MCP service: %v", err)
 	}
 
+	releaseGuard = false
+	defer func() {
+		drainCtx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+		defer cancel()
+		if err := mcpService.ShutdownRegistrations(drainCtx); err != nil {
+			if guard != nil {
+				guard.retain()
+			}
+			log.Printf("[server] registration drain failed; writer guard retained: %v", err)
+			return
+		}
+		releaseGuard = true
+	}()
 	mcpClientService := mcpclient.NewMCPClientService(dbConn)
 
 	configService := config.NewServerConfigService(dbConn)
@@ -593,7 +623,14 @@ func runStartServer(cmd *cobra.Command, args []string) error {
 	sig := <-quit
 	log.Printf("[server] Received signal %v, initiating graceful shutdown...\n", sig)
 
-	// Gracefully shutdown the MCP service (closes all stateful sessions)
+	cancelRequests()
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 50*time.Second)
+	drainErr := mcpService.ShutdownRegistrations(drainCtx)
+	drainCancel()
+	if drainErr != nil {
+		return fmt.Errorf("registration drain failed; writer guard retained: %w", drainErr)
+	}
+	// Registration workers are drained before stateful sessions and the writer guard close.
 	mcpService.Shutdown()
 
 	// Gracefully shutdown the HTTP server with a timeout

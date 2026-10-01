@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"syscall"
@@ -67,6 +68,18 @@ func (sr *sessionResult) invalidateOnError(err error) {
 // For stateful servers, it returns a persistent session from the SessionManager.
 // For stateless servers, it creates a new session that should be closed after use.
 func (m *MCPService) getSession(ctx context.Context, server *model.McpServer) (*sessionResult, error) {
+	if m.registration != nil && m.registration.storage {
+		if err := m.registration.lock(ctx); err != nil {
+			return nil, err
+		}
+		defer m.registration.unlock()
+		if m.registration.stopping {
+			return nil, fmt.Errorf("gateway is shutting down")
+		}
+		if err := m.registrationReady(ctx, server.Name); err != nil {
+			return nil, err
+		}
+	}
 	if server.SessionMode == types.SessionModeStateful {
 		// Use the session manager for stateful sessions
 		mcpClient, err := m.sessionManager.GetOrCreateSession(ctx, server)

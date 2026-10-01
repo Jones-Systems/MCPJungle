@@ -171,103 +171,84 @@ func (m *MCPService) DisablePrompts(entity string) ([]string, error) {
 
 // setPromptsEnabled does the heavy lifting of enabling or disabling one or more prompts.
 func (m *MCPService) setPromptsEnabled(entity string, enabled bool) ([]string, error) {
-	serverName, promptName, ok := splitServerPromptName(entity)
-	if ok {
-		// splitting was successful, so the entity is a prompt name
-		// only this prompt needs to be enabled/disabled
-		s, err := m.GetMcpServer(serverName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get MCP server %s: %w", serverName, err)
-		}
-
-		var prompt model.Prompt
-		if err := m.db.Where("server_id = ? AND name = ?", s.ID, promptName).First(&prompt).Error; err != nil {
-			return nil, fmt.Errorf("failed to get prompt %s: %w", entity, err)
-		}
-
-		if prompt.Enabled == enabled {
-			return []string{entity}, nil // no change needed
-		}
-
-		prompt.Enabled = enabled
-		if err := m.db.Save(&prompt).Error; err != nil {
-			return nil, fmt.Errorf("failed to set prompt %s enabled=%t: %w", entity, enabled, err)
-		}
-
-		if enabled {
-			// if the prompt was enabled, add it back to the MCP proxy server
-			mcpPrompt, err := convertPromptModelToMcpObject(&prompt)
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert prompt model to MCP object for prompt %s: %w", prompt.Name, err)
-			}
-			// set the prompt name to its canonical form in the proxy
-			mcpPrompt.Name = entity
-
-			if s.Transport == types.TransportSSE {
-				m.sseMcpProxyServer.AddPrompt(mcpPrompt, m.mcpProxyPromptHandler)
-			} else {
-				m.mcpProxyServer.AddPrompt(mcpPrompt, m.mcpProxyPromptHandler)
-			}
-		} else {
-			// if the prompt was disabled, remove it from the MCP proxy server
-			if s.Transport == types.TransportSSE {
-				m.sseMcpProxyServer.DeletePrompts(entity)
-			} else {
-				m.mcpProxyServer.DeletePrompts(entity)
-			}
-		}
-
-		return []string{entity}, nil
+	serverName, promptName, single := splitServerPromptName(entity)
+	if !single {
+		serverName = entity
 	}
-
-	// splitting was unsuccessful, so the entity is a server name
-	// all prompts of this server need to be enabled/disabled
-	s, err := m.GetMcpServer(entity)
+	s, err := m.GetMcpServer(serverName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get MCP server %s: %w", serverName, err)
 	}
 
 	var prompts []model.Prompt
-	if err := m.db.Where("server_id = ?", s.ID).Find(&prompts).Error; err != nil {
+	if single {
+		var prompt model.Prompt
+		if err := m.db.Where("server_id = ? AND name = ?", s.ID, promptName).First(&prompt).Error; err != nil {
+			return nil, fmt.Errorf("failed to get prompt %s: %w", entity, err)
+		}
+		prompts = []model.Prompt{prompt}
+	} else if err := m.db.Where("server_id = ?", s.ID).Find(&prompts).Error; err != nil {
 		return nil, fmt.Errorf("failed to get prompts for server %s: %w", entity, err)
 	}
 
 	var changedPromptNames []string
-	for i := range prompts {
-		if prompts[i].Enabled == enabled {
-			continue // no change needed
-		}
-		prompts[i].Enabled = enabled
-		if err := m.db.Save(&prompts[i]).Error; err != nil {
-			return nil, fmt.Errorf("failed to set prompt %s enabled=%t: %w", prompts[i].Name, enabled, err)
-		}
-		canonicalPromptName := mergeServerPromptNames(s.Name, prompts[i].Name)
-
-		if enabled {
-			mcpPrompt, err := convertPromptModelToMcpObject(&prompts[i])
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert prompt model to MCP object for prompt %s: %w", prompts[i].Name, err)
+	err = m.withCatalogStatusPublication(s.Name, func() error {
+		for i := range prompts {
+			canonicalPromptName := mergeServerPromptNames(s.Name, prompts[i].Name)
+			if prompts[i].Enabled == enabled {
+				if single {
+					changedPromptNames = append(changedPromptNames, canonicalPromptName)
+				}
+				continue
 			}
-			// set the prompt name to its canonical form in the proxy
-			mcpPrompt.Name = canonicalPromptName
+			updated := m.db.Model(&model.Prompt{}).Where("id = ? AND server_id = ? AND name = ?", prompts[i].ID, s.ID, prompts[i].Name).Update("enabled", enabled)
+			if updated.Error != nil {
+				return fmt.Errorf("failed to set prompt %s enabled=%t: %w", canonicalPromptName, enabled, updated.Error)
+			}
+			if updated.RowsAffected != 1 {
+				return fmt.Errorf("prompt %s no longer exists: %w", canonicalPromptName, apierrors.ErrNotFound)
+			}
+			prompts[i].Enabled = enabled
 
-			if s.Transport == types.TransportSSE {
-				m.sseMcpProxyServer.AddPrompt(mcpPrompt, m.mcpProxyPromptHandler)
+			if enabled {
+				mcpPrompt, err := convertPromptModelToMcpObject(&prompts[i])
+				if err != nil {
+					return fmt.Errorf("failed to convert prompt model to MCP object for prompt %s: %w", prompts[i].Name, err)
+				}
+				// Set the prompt name to its canonical form in the proxy.
+				mcpPrompt.Name = canonicalPromptName
+
+				if s.Transport == types.TransportSSE {
+					m.sseMcpProxyServer.AddPrompt(mcpPrompt, m.mcpProxyPromptHandler)
+				} else {
+					m.mcpProxyServer.AddPrompt(mcpPrompt, m.mcpProxyPromptHandler)
+				}
 			} else {
-				m.mcpProxyServer.AddPrompt(mcpPrompt, m.mcpProxyPromptHandler)
+				if s.Transport == types.TransportSSE {
+					m.sseMcpProxyServer.DeletePrompts(canonicalPromptName)
+				} else {
+					m.mcpProxyServer.DeletePrompts(canonicalPromptName)
+				}
 			}
-		} else {
-			if s.Transport == types.TransportSSE {
-				m.sseMcpProxyServer.DeletePrompts(canonicalPromptName)
-			} else {
-				m.mcpProxyServer.DeletePrompts(canonicalPromptName)
-			}
+			changedPromptNames = append(changedPromptNames, canonicalPromptName)
 		}
-
-		changedPromptNames = append(changedPromptNames, canonicalPromptName)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
 	return changedPromptNames, nil
+}
+
+// Catalog reads may precede retirement; persistence and proxy publication must share its gate.
+func (m *MCPService) withCatalogStatusPublication(name string, publish func() error) error {
+	ctx := context.Background()
+	return m.withRegistrationPublication(ctx, name, func() error {
+		if err := m.registrationReady(ctx, name); err != nil {
+			return err
+		}
+		return publish()
+	})
 }
 
 // registerServerPrompts fetches all prompts from an MCP server and registers them in the DB.
@@ -277,36 +258,37 @@ func (m *MCPService) registerServerPrompts(ctx context.Context, s *model.McpServ
 	if err != nil {
 		return fmt.Errorf("failed to fetch prompts from MCP server %s: %w", s.Name, err)
 	}
-	for _, prompt := range resp.Prompts {
-		canonicalPromptName := mergeServerPromptNames(s.Name, prompt.GetName())
+	return m.withRegistrationPublication(ctx, s.Name, func() error {
+		for _, prompt := range resp.Prompts {
+			canonicalPromptName := mergeServerPromptNames(s.Name, prompt.GetName())
 
-		// extracting json schema is currently on best-effort basis
-		// if it fails, we log the error and continue with the next prompt
-		jsonArguments, _ := json.Marshal(prompt.Arguments)
+			// Legacy registration keeps argument serialization best-effort.
+			jsonArguments, _ := json.Marshal(prompt.Arguments)
 
-		p := &model.Prompt{
-			ServerID:    s.ID,
-			Name:        prompt.GetName(),
-			Description: prompt.Description,
-			Arguments:   jsonArguments,
-		}
-		if err := m.db.Create(p).Error; err != nil {
-			// If registration of a prompt fails, we should not fail the entire server registration.
-			// Instead, continue with the next prompt.
-			log.Printf("[ERROR] failed to register prompt %s in DB: %v", canonicalPromptName, err)
-		} else {
-			// Set prompt name to include the server name prefix to make it recognizable by MCPJungle
-			// then add the prompt to the MCP proxy server
-			prompt.Name = canonicalPromptName
-
-			if s.Transport == types.TransportSSE {
-				m.sseMcpProxyServer.AddPrompt(prompt, m.mcpProxyPromptHandler)
+			p := &model.Prompt{
+				ServerID:    s.ID,
+				Name:        prompt.GetName(),
+				Description: prompt.Description,
+				Arguments:   jsonArguments,
+			}
+			if err := m.db.Create(p).Error; err != nil {
+				// If registration of a prompt fails, we should not fail the entire server registration.
+				// Instead, continue with the next prompt.
+				log.Printf("[ERROR] failed to register prompt %s in DB: %v", canonicalPromptName, err)
 			} else {
-				m.mcpProxyServer.AddPrompt(prompt, m.mcpProxyPromptHandler)
+				// Set prompt name to include the server name prefix to make it recognizable by MCPJungle
+				// then add the prompt to the MCP proxy server
+				prompt.Name = canonicalPromptName
+
+				if s.Transport == types.TransportSSE {
+					m.sseMcpProxyServer.AddPrompt(prompt, m.mcpProxyPromptHandler)
+				} else {
+					m.mcpProxyServer.AddPrompt(prompt, m.mcpProxyPromptHandler)
+				}
 			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // deregisterServerPrompts deletes all prompts that belong to an MCP server from the DB.

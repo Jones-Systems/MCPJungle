@@ -211,7 +211,8 @@ func (m *MCPService) setResourcesEnabled(entity string, enabled bool) ([]string,
 			return m.setServerResourcesEnabled(s, enabled)
 		}
 	}
-	if _, _, err := parseResourceURI(entity); err != nil {
+	serverName, _, err := parseResourceURI(entity)
+	if err != nil {
 		return nil, err
 	}
 
@@ -225,34 +226,15 @@ func (m *MCPService) setResourcesEnabled(entity string, enabled bool) ([]string,
 	}
 
 	resource := resources[0]
-	if resource.Enabled == enabled {
-		return []string{resource.URI}, nil
-	}
-	resource.Enabled = enabled
-	if err := m.db.Save(&resource).Error; err != nil {
-		return nil, fmt.Errorf("failed to set resource %s enabled=%t: %w", resource.URI, enabled, err)
-	}
-
-	if enabled {
-		mcpResource, err := convertResourceModelToMcpObject(&resource)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert resource model to MCP object for resource %s: %w", resource.URI, err)
+	err = m.withCatalogStatusPublication(serverName, func() error {
+		if resource.Enabled == enabled {
+			return nil
 		}
-		mcpResource.Name = mergeServerResourceNames(resource.Server.Name, mcpResource.Name)
-
-		if resource.Server.Transport == types.TransportSSE {
-			m.sseMcpProxyServer.AddResource(mcpResource, m.mcpProxyResourceHandler)
-		} else {
-			m.mcpProxyServer.AddResource(mcpResource, m.mcpProxyResourceHandler)
-		}
-	} else {
-		if resource.Server.Transport == types.TransportSSE {
-			m.sseMcpProxyServer.DeleteResources(resource.URI)
-		} else {
-			m.mcpProxyServer.DeleteResources(resource.URI)
-		}
+		return m.updateResourceEnabled(&resource.Server, &resource, enabled)
+	})
+	if err != nil {
+		return nil, err
 	}
-
 	return []string{resource.URI}, nil
 }
 
@@ -263,39 +245,54 @@ func (m *MCPService) setServerResourcesEnabled(s *model.McpServer, enabled bool)
 	}
 
 	var changedURIs []string
-	for i := range resources {
-		if resources[i].Enabled == enabled {
-			continue
-		}
-		resources[i].Enabled = enabled
-		if err := m.db.Save(&resources[i]).Error; err != nil {
-			return nil, fmt.Errorf("failed to set resource %s enabled=%t: %w", resources[i].URI, enabled, err)
-		}
-
-		if enabled {
-			mcpResource, err := convertResourceModelToMcpObject(&resources[i])
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert resource model to MCP object for resource %s: %w", resources[i].URI, err)
+	err := m.withCatalogStatusPublication(s.Name, func() error {
+		for i := range resources {
+			if resources[i].Enabled == enabled {
+				continue
 			}
-			mcpResource.Name = mergeServerResourceNames(s.Name, mcpResource.Name)
-
-			if s.Transport == types.TransportSSE {
-				m.sseMcpProxyServer.AddResource(mcpResource, m.mcpProxyResourceHandler)
-			} else {
-				m.mcpProxyServer.AddResource(mcpResource, m.mcpProxyResourceHandler)
+			if err := m.updateResourceEnabled(s, &resources[i], enabled); err != nil {
+				return err
 			}
-		} else {
-			if s.Transport == types.TransportSSE {
-				m.sseMcpProxyServer.DeleteResources(resources[i].URI)
-			} else {
-				m.mcpProxyServer.DeleteResources(resources[i].URI)
-			}
+			changedURIs = append(changedURIs, resources[i].URI)
 		}
-
-		changedURIs = append(changedURIs, resources[i].URI)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
 	return changedURIs, nil
+}
+
+func (m *MCPService) updateResourceEnabled(s *model.McpServer, resource *model.Resource, enabled bool) error {
+	updated := m.db.Model(&model.Resource{}).Where("id = ? AND server_id = ? AND uri = ?", resource.ID, s.ID, resource.URI).Update("enabled", enabled)
+	if updated.Error != nil {
+		return fmt.Errorf("failed to set resource %s enabled=%t: %w", resource.URI, enabled, updated.Error)
+	}
+	if updated.RowsAffected != 1 {
+		return fmt.Errorf("resource %s no longer exists: %w", resource.URI, apierrors.ErrNotFound)
+	}
+	resource.Enabled = enabled
+
+	if enabled {
+		mcpResource, err := convertResourceModelToMcpObject(resource)
+		if err != nil {
+			return fmt.Errorf("failed to convert resource model to MCP object for resource %s: %w", resource.URI, err)
+		}
+		mcpResource.Name = mergeServerResourceNames(s.Name, mcpResource.Name)
+
+		if s.Transport == types.TransportSSE {
+			m.sseMcpProxyServer.AddResource(mcpResource, m.mcpProxyResourceHandler)
+		} else {
+			m.mcpProxyServer.AddResource(mcpResource, m.mcpProxyResourceHandler)
+		}
+	} else {
+		if s.Transport == types.TransportSSE {
+			m.sseMcpProxyServer.DeleteResources(resource.URI)
+		} else {
+			m.mcpProxyServer.DeleteResources(resource.URI)
+		}
+	}
+	return nil
 }
 
 // registerServerResources fetches all resources from an MCP server and registers them in the DB.
@@ -305,37 +302,39 @@ func (m *MCPService) registerServerResources(ctx context.Context, s *model.McpSe
 		return fmt.Errorf("failed to fetch resources from MCP server %s: %w", s.Name, err)
 	}
 
-	for _, resource := range resp.Resources {
-		canonicalResourceName := mergeServerResourceNames(s.Name, resource.GetName())
+	return m.withRegistrationPublication(ctx, s.Name, func() error {
+		for _, resource := range resp.Resources {
+			canonicalResourceName := mergeServerResourceNames(s.Name, resource.GetName())
 
-		annotationsJSON, _ := json.Marshal(resource.Annotations)
-		metaJSON, _ := json.Marshal(resource.Meta)
+			annotationsJSON, _ := json.Marshal(resource.Annotations)
+			metaJSON, _ := json.Marshal(resource.Meta)
 
-		r := &model.Resource{
-			ServerID:    s.ID,
-			URI:         buildResourceURI(s.Name, resource.URI),
-			OriginalURI: resource.URI,
-			Name:        resource.GetName(),
-			Description: resource.Description,
-			MIMEType:    resource.MIMEType,
-			Annotations: annotationsJSON,
-			Meta:        metaJSON,
+			r := &model.Resource{
+				ServerID:    s.ID,
+				URI:         buildResourceURI(s.Name, resource.URI),
+				OriginalURI: resource.URI,
+				Name:        resource.GetName(),
+				Description: resource.Description,
+				MIMEType:    resource.MIMEType,
+				Annotations: annotationsJSON,
+				Meta:        metaJSON,
+			}
+			if err := m.db.Create(r).Error; err != nil {
+				log.Printf("[ERROR] failed to register resource %s (%s) in DB: %v", canonicalResourceName, resource.URI, err)
+				continue
+			}
+
+			resource.URI = r.URI
+			resource.Name = canonicalResourceName
+			if s.Transport == types.TransportSSE {
+				m.sseMcpProxyServer.AddResource(resource, m.mcpProxyResourceHandler)
+			} else {
+				m.mcpProxyServer.AddResource(resource, m.mcpProxyResourceHandler)
+			}
 		}
-		if err := m.db.Create(r).Error; err != nil {
-			log.Printf("[ERROR] failed to register resource %s (%s) in DB: %v", canonicalResourceName, resource.URI, err)
-			continue
-		}
 
-		resource.URI = r.URI
-		resource.Name = canonicalResourceName
-		if s.Transport == types.TransportSSE {
-			m.sseMcpProxyServer.AddResource(resource, m.mcpProxyResourceHandler)
-		} else {
-			m.mcpProxyServer.AddResource(resource, m.mcpProxyResourceHandler)
-		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // deregisterServerResources deletes all resources that belong to an MCP server from the DB.
