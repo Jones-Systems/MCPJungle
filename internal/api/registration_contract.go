@@ -73,3 +73,15 @@ func (s *Server) resolveRegistrationHandler() gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{"registration_contract": 1, "name": c.Param("name"), "outcome": outcome, "terminal": true})
 	}
 }
+
+// registrationStatusHandler exposes bounded lifecycle metadata without acquiring a session.
+func (s *Server) registrationStatusHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		status, err := s.mcpService.RegistrationCleanupStatus(c.Request.Context())
+		if err != nil {
+			handleServiceError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	}
+}

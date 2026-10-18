@@ -284,6 +284,7 @@ func (s *Server) setupRouter() (*gin.Engine, error) {
 	adminAPI := apiV0.Group("/", s.requireAdminUser())
 	{
 		adminAPI.GET("/capabilities", s.registrationCapabilitiesHandler())
+		adminAPI.GET("/registration-status", s.registrationStatusHandler())
 		adminAPI.POST("/servers/:name/resolve", s.resolveRegistrationHandler())
 		adminAPI.POST("/servers", s.registerServerHandler())
 		adminAPI.POST("/upstream_oauth/sessions/:id/complete", s.completeUpstreamOAuthSessionHandler())

@@ -37,17 +37,18 @@ type registrationWorker struct {
 }
 
 type registrationCoordinator struct {
-	gate       chan struct{}
-	createSlot chan struct{}
-	workers    map[string]*registrationWorker
-	deleting   map[string]bool
-	enabled    bool
-	storage    bool
-	stopping   bool
+	gate                  chan struct{}
+	createSlot            chan struct{}
+	workers               map[string]*registrationWorker
+	deleting              map[string]bool
+	enabled               bool
+	storage               bool
+	stopping              bool
+	startupCleanupPending map[string]struct{}
 }
 
 func newRegistrationCoordinator(c *ServiceConfig) *registrationCoordinator {
-	r := &registrationCoordinator{gate: make(chan struct{}, 1), createSlot: make(chan struct{}, 1), workers: map[string]*registrationWorker{}, deleting: map[string]bool{}}
+	r := &registrationCoordinator{gate: make(chan struct{}, 1), createSlot: make(chan struct{}, 1), workers: map[string]*registrationWorker{}, deleting: map[string]bool{}, startupCleanupPending: map[string]struct{}{}}
 	r.gate <- struct{}{}
 	r.createSlot <- struct{}{}
 	r.storage = c.DB.Migrator().HasTable(&model.RegistrationLifecycle{})
@@ -502,6 +503,10 @@ func (m *MCPService) fenceRegistration(ctx context.Context, name, definition str
 	if row != nil && definition != "" && row.Definition != definition {
 		return nil, conflict("definition_mismatch")
 	}
+	// A new process has no evidence that a previous generation's cleanup completed.
+	if _, pending := r.startupCleanupPending[name]; pending {
+		return nil, conflict("cleanup_pending")
+	}
 	if row != nil && row.ServerID != 0 && definition != "" {
 		var current model.McpServer
 		if err = m.db.WithContext(ctx).First(&current, row.ServerID).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -753,7 +758,9 @@ func (m *MCPService) reconcileRegistrations() error {
 	for i := range rows {
 		row := &rows[i]
 		if row.CleanupPending {
-			return fmt.Errorf("registration cleanup requires reconciliation for %s", row.Name)
+			// Preserve the row and its unknown cleanup; quarantine only this name.
+			m.registration.startupCleanupPending[row.Name] = struct{}{}
+			continue
 		}
 		if row.State == "ready" && !row.Fenced {
 			var s model.McpServer
@@ -800,7 +807,7 @@ func (m *MCPService) withRegistrationPublication(ctx context.Context, name strin
 		if err != nil {
 			return err
 		}
-		if row != nil && row.Fenced {
+		if row != nil && (row.Fenced || row.CleanupPending) {
 			return conflict("name_fenced")
 		}
 	}
