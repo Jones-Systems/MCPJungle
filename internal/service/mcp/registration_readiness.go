@@ -41,7 +41,7 @@ func managedToolModel(tool protocol.Tool) (model.Tool, error) {
 
 func (m *MCPService) visibleToolsQuery(db *gorm.DB) *gorm.DB {
 	if m.registration != nil && m.registration.storage {
-		return db.Where("server_id NOT IN (?)", m.db.Model(&model.RegistrationLifecycle{}).Select("server_id").Where("state <> ? OR fenced = ?", "ready", true))
+		return db.Where("server_id NOT IN (?)", m.db.Model(&model.RegistrationLifecycle{}).Select("server_id").Where("state <> ? OR fenced = ? OR cleanup_pending = ?", "ready", true, true))
 	}
 	return db
 }
@@ -53,7 +53,7 @@ func (m *MCPService) registrationReady(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if row != nil && (row.Fenced || row.State != "ready") {
+	if row != nil && (row.Fenced || row.CleanupPending || row.State != "ready") {
 		return fmt.Errorf("registration is not ready: %w", apierrors.ErrNotFound)
 	}
 	return nil

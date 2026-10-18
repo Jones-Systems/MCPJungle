@@ -17,12 +17,13 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/mcpjungle/mcpjungle/internal/migrations"
+	"github.com/mcpjungle/mcpjungle/internal/model"
 	"github.com/mcpjungle/mcpjungle/internal/service/mcp"
 	"github.com/mcpjungle/mcpjungle/internal/telemetry"
 	"gorm.io/gorm"
 )
 
-func registrationAPIFixture(t *testing.T, guard bool) *gin.Engine {
+func registrationAPIFixture(t *testing.T, guard bool, seeds ...func(*gorm.DB)) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "gateway.db")), &gorm.Config{})
@@ -37,6 +38,9 @@ func registrationAPIFixture(t *testing.T, guard bool) *gin.Engine {
 	if err = migrations.Migrate(db); err != nil {
 		t.Fatal(err)
 	}
+	for _, seed := range seeds {
+		seed(db)
+	}
 	svc, err := mcp.NewMCPService(&mcp.ServiceConfig{DB: db, RegistrationSingleWriter: guard, McpServerInitReqTimeout: 2, McpProxyServer: server.NewMCPServer("fixture", "1"), SseMcpProxyServer: server.NewMCPServer("sse", "1"), Metrics: telemetry.NewNoopCustomMetrics(), SessionManager: mcp.NewSessionManager(&mcp.SessionManagerConfig{DB: db, IdleTimeoutSec: 0, InitReqTimeoutSec: 2})})
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +49,7 @@ func registrationAPIFixture(t *testing.T, guard bool) *gin.Engine {
 	s := &Server{mcpService: svc}
 	router := gin.New()
 	router.GET("/api/v0/capabilities", s.registrationCapabilitiesHandler())
+	router.GET("/api/v0/registration-status", s.registrationStatusHandler())
 	router.POST("/api/v0/servers", s.registerServerHandler())
 	router.POST("/api/v0/servers/:name/resolve", s.resolveRegistrationHandler())
 	router.DELETE("/api/v0/servers/:name", s.deregisterServerHandler())
@@ -190,5 +195,29 @@ func TestRegistrationHTTPDisconnectDrainsDiscovery(t *testing.T) {
 	_ = json.Unmarshal(response.Body.Bytes(), &receipt)
 	if receipt["terminal"] != true || receipt["outcome"] != "absent" {
 		t.Fatal("disconnect did not drain before terminal receipt")
+	}
+}
+
+func TestRegistrationStatusReportsPendingWithoutChangingCapabilities(t *testing.T) {
+	r := registrationAPIFixture(t, true, func(db *gorm.DB) {
+		if err := db.Create(&model.RegistrationLifecycle{Name: "pending-old", Definition: "private-credential-and-args", State: "reserved", CleanupPending: true}).Error; err != nil {
+			t.Fatal(err)
+		}
+	})
+	w := registrationAPIRequest(r, http.MethodGet, "/api/v0/registration-status", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var result mcp.RegistrationStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || !result.Available || !result.Complete || len(result.CleanupPendingNames) != 1 || result.CleanupPendingNames[0] != "pending-old" {
+		t.Fatalf("invalid status: %s %v", w.Body, err)
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte("private")) {
+		t.Fatal("definition leaked")
+	}
+	w = registrationAPIRequest(r, http.MethodGet, "/api/v0/capabilities", "")
+	var caps map[string]int
+	if err := json.Unmarshal(w.Body.Bytes(), &caps); err != nil || len(caps) != 3 || caps["registration_contract"] != 1 {
+		t.Fatalf("capability contract changed: %s %v", w.Body, err)
 	}
 }
