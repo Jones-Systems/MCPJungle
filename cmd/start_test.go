@@ -106,13 +106,13 @@ func withBindHostFlag(t *testing.T, value string, changed bool, fn func()) {
 }
 
 func TestGetBindHost(t *testing.T) {
-	t.Run("returns empty string when unset", func(t *testing.T) {
+	t.Run("defaults to loopback when unset", func(t *testing.T) {
 		withBindHostFlag(t, "", false, func() {
 			withEnv(map[string]string{
 				BindHostEnvVar: "",
 			}, func() {
-				if got := getBindHost(startServerCmd); got != "" {
-					t.Fatalf("expected empty bind host, got %q", got)
+				if got := getBindHost(startServerCmd); got != "127.0.0.1" {
+					t.Fatalf("expected loopback bind host, got %q", got)
 				}
 			})
 		})
@@ -129,6 +129,25 @@ func TestGetBindHost(t *testing.T) {
 			})
 		})
 	})
+
+	for _, host := range []string{"0.0.0.0", "::", "192.0.2.1"} {
+		t.Run("explicit env host "+host, func(t *testing.T) {
+			withBindHostFlag(t, "", false, func() {
+				t.Setenv(BindHostEnvVar, host)
+				if got := getBindHost(startServerCmd); got != host {
+					t.Fatalf("expected explicit env host %q, got %q", host, got)
+				}
+			})
+		})
+		t.Run("explicit flag host "+host, func(t *testing.T) {
+			withBindHostFlag(t, host, true, func() {
+				t.Setenv(BindHostEnvVar, "127.0.0.1")
+				if got := getBindHost(startServerCmd); got != host {
+					t.Fatalf("expected explicit flag host %q, got %q", host, got)
+				}
+			})
+		})
+	}
 
 	t.Run("flag takes precedence over env var", func(t *testing.T) {
 		withBindHostFlag(t, "0.0.0.0", true, func() {

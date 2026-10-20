@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: mcpjungle
       POSTGRES_DB: mcpjungle
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
@@ -27,7 +27,7 @@ services:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
-      - "5050:80"
+      - "127.0.0.1:5050:80"
     depends_on:
       - db
 
@@ -36,11 +36,12 @@ services:
     container_name: mcpjungle-server
     environment:
       DATABASE_URL: postgres://mcpjungle:mcpjungle@db:5432/mcpjungle
+      MCPJUNGLE_BIND_HOST: "0.0.0.0"
       SERVER_MODE: ${SERVER_MODE:-enterprise}
       OTEL_ENABLED: ${OTEL_ENABLED:-true}
       MCP_SERVER_INIT_REQ_TIMEOUT_SEC: ${MCP_SERVER_INIT_REQ_TIMEOUT_SEC:-10}
     ports:
-     - "${HOST_PORT:-8080}:8080"
+     - "${MCPJUNGLE_HOST_BIND:-127.0.0.1}:${HOST_PORT:-8080}:8080"
     # volumes:
       # Uncomment the following lines ONLY if you need filesystem MCP server access
       # WARNING: This mounts the host filesystem and should only be used for personal/development use
@@ -59,7 +60,7 @@ services:
     image: prom/prometheus:v2.53.0
     container_name: mcpjungle-prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
