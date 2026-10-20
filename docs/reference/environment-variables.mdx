@@ -95,7 +95,7 @@ When the server starts it resolves the database connection in this order:
 ## Server
 
 <ParamField path="MCPJUNGLE_BIND_HOST" type="string">
-  Host or network interface the HTTP server binds to. The `--host` CLI flag takes precedence over this variable. If unset, MCPJungle listens on all interfaces.
+  Host or network interface the HTTP server binds to. The `--host` CLI flag takes precedence over this variable. If unset or empty, MCPJungle listens on `127.0.0.1` for local-only access. Set `0.0.0.0` (IPv4) or `::` (IPv6) for deliberate remote or container access. Development mode has no authentication; use appropriate authentication and a trusted network before exposing the server.
 
   ```bash
   export MCPJUNGLE_BIND_HOST=127.0.0.1
@@ -220,7 +220,7 @@ When the server starts it resolves the database connection in this order:
 | `POSTGRES_PASSWORD_FILE` | Database | — | File path for PostgreSQL password. |
 | `POSTGRES_DB` | Database | `postgres` | PostgreSQL database name. |
 | `POSTGRES_DB_FILE` | Database | — | File path for PostgreSQL database name. |
-| `MCPJUNGLE_BIND_HOST` | Server | all interfaces | HTTP listen host or network interface. |
+| `MCPJUNGLE_BIND_HOST` | Server | `127.0.0.1` | HTTP listen host or network interface. |
 | `PORT` | Server | `8080` | HTTP listen port. |
 | `SERVER_MODE` | Server | `development` | Server mode: `development` or `enterprise`. |
 | `MCP_SERVER_INIT_REQ_TIMEOUT_SEC` | Server | `30` | Seconds to wait for MCP server initialization. |

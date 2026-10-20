@@ -23,5 +23,5 @@ COPY mcpjungle /mcpjungle
 EXPOSE 8080
 ENTRYPOINT ["/mcpjungle"]
 
-# Run the Registry Server by default
-CMD ["start"]
+# Bind inside the container so published ports and peer containers can reach the server.
+CMD ["start", "--host", "0.0.0.0"]

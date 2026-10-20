@@ -186,18 +186,14 @@ The MCPJungle server is responsible for managing all the MCP servers registered 
 The gateway itself runs over streamable http transport and is accessible at the `/mcp` endpoint.
 
 ### Running inside Docker
-For running the MCPJungle server locally, docker compose is the recommended way:
+For running the MCPJungle server locally, use the Compose files from this checkout:
 ```shell
 # docker-compose.yaml is optimized for individuals running mcpjungle on their local machines for personal use.
 # mcpjungle will run in `development` mode by default.
-curl -O https://raw.githubusercontent.com/mcpjungle/MCPJungle/refs/heads/main/docker-compose.yaml
-
 docker compose up -d
 
 # docker-compose.prod.yaml is optimized for orgs deploying mcpjungle on a remote server for multiple users.
 # mcpjungle will run in `enterprise` mode by default, which enables enterprise features.
-curl -O https://raw.githubusercontent.com/mcpjungle/MCPJungle/refs/heads/main/docker-compose.prod.yaml
-
 docker compose -f docker-compose.prod.yaml up -d
 ```
 
@@ -206,6 +202,18 @@ docker compose -f docker-compose.prod.yaml up -d
 > The mode has now been renamed for clarity. Everything else remains the same.
 
 This will start the MCPJungle server along with a persistent Postgres database container.
+
+The Compose files in this checkout explicitly bind MCPJungle to `0.0.0.0` inside the container so published ports and peer containers can reach it. On the host, they publish the gateway on `127.0.0.1:8080` by default. Database, pgAdmin, and Prometheus ports are also published only on host loopback where included.
+
+For deliberate remote gateway access, set `MCPJUNGLE_HOST_BIND` to the intended host interface, or `0.0.0.0` for all IPv4 interfaces:
+
+```bash
+MCPJUNGLE_HOST_BIND=0.0.0.0 docker compose -f docker-compose.prod.yaml up -d
+```
+
+Configure appropriate authentication and a trusted network before exposing the gateway. Development mode has no authentication. This override changes only the gateway's host publication; the supporting services remain on loopback.
+
+These defaults describe the checked-in Compose files and Dockerfiles. The Compose files pull upstream images rather than building this source; upstream Compose files and binaries may have different defaults. Use this checkout's Compose files for the host binding defaults described here. Images built from these Dockerfiles explicitly start with `--host 0.0.0.0`; when using `docker run` directly, publish locally with `-p 127.0.0.1:8080:8080`.
 
 You can quickly verify that the server is running:
 ```bash
@@ -247,7 +255,9 @@ You can also run the server directly on your host machine using the binary:
 mcpjungle start
 ```
 
-This starts the main registry server and MCP gateway, accessible on port `8080` by default.
+This starts the main registry server and MCP gateway at `127.0.0.1:8080`, accessible only from the local host by default.
+
+For deliberate remote or container access, set `--host 0.0.0.0` (IPv4) or `--host ::` (IPv6), or set `MCPJUNGLE_BIND_HOST`. Development mode has no authentication; use appropriate authentication and a trusted network before exposing the server.
 
 ### Shutting down
 It is important that the mcpjungle server shuts down gracefully to ensure proper cleanup.

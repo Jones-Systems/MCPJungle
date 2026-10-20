@@ -39,11 +39,11 @@ const (
 	BindPortDefault = "8080"
 
 	// BindHostEnvVar configures the interface the HTTP server binds to.
-	// Empty (the default) keeps the historical behaviour of listening on every
-	// interface; "127.0.0.1" makes a local gateway reachable only from the host,
+	// Unset or empty defaults to loopback, making the gateway local-only,
 	// which matters because a development-mode server has no authentication and
 	// its tools can act on the upstreams it proxies.
-	BindHostEnvVar = "MCPJUNGLE_BIND_HOST"
+	BindHostEnvVar  = "MCPJUNGLE_BIND_HOST"
+	BindHostDefault = "127.0.0.1"
 
 	DBUrlEnvVar            = "DATABASE_URL"
 	SQLiteDBPathEnvVar     = "SQLITE_DB_PATH"
@@ -119,7 +119,7 @@ func init() {
 		"host",
 		"",
 		fmt.Sprintf(
-			"host/interface to bind the HTTP server to, eg- 127.0.0.1 for local-only access "+
+			"host/interface to bind the HTTP server to (default 127.0.0.1 for local-only access) "+
 				"(overrides env var %s; empty means all interfaces)",
 			BindHostEnvVar,
 		),
@@ -246,14 +246,17 @@ func isTelemetryEnabled(desiredServerMode model.ServerMode) (bool, error) {
 }
 
 // getBindHost returns the interface to bind to.
-// precedence: command line flag > environment variable > all interfaces
+// precedence: command line flag > non-empty environment variable > loopback
 // An explicit empty --host is meaningful: it forces the historical all-interface
 // bind even when MCPJUNGLE_BIND_HOST is set.
 func getBindHost(cmd *cobra.Command) string {
 	if cmd.Flags().Changed("host") {
 		return startServerCmdBindHost
 	}
-	return os.Getenv(BindHostEnvVar)
+	if host := os.Getenv(BindHostEnvVar); host != "" {
+		return host
+	}
+	return BindHostDefault
 }
 
 // getBindPort returns the TCP port to bind the mcpjungle server to

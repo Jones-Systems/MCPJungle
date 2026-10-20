@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: mcpjungle
       POSTGRES_DB: mcpjungle
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
@@ -25,11 +25,12 @@ services:
     container_name: mcpjungle-server
     environment:
       DATABASE_URL: postgres://mcpjungle:mcpjungle@db:5432/mcpjungle
+      MCPJUNGLE_BIND_HOST: "0.0.0.0"
       SERVER_MODE: ${SERVER_MODE:-development}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       MCP_SERVER_INIT_REQ_TIMEOUT_SEC: ${MCP_SERVER_INIT_REQ_TIMEOUT_SEC:-10}
     ports:
-      - "${HOST_PORT:-8080}:8080"
+      - "${MCPJUNGLE_HOST_BIND:-127.0.0.1}:${HOST_PORT:-8080}:8080"
     volumes:
       # Mount host filesystem current directory to enable filesystem MCP server access
       - .:/host:ro
