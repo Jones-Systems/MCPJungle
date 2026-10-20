@@ -65,13 +65,21 @@ This quickstart guide will show you how to:
 3. Connect your Claude Desktop to mcpjungle to access your MCP tools
 
 ### Start the server
-Fetch the `docker-compose.yaml` and start the mcpjungle server:
+With Docker and the Docker Compose plugin installed, download this fork's
+loopback-only Compose configuration into your setup directory and start the server:
 ```bash
-curl -O https://raw.githubusercontent.com/mcpjungle/MCPJungle/refs/heads/main/docker-compose.yaml
+curl --fail --location --output docker-compose.yaml \
+  https://raw.githubusercontent.com/Jones-Systems/MCPJungle/7633011c1bc372ca21ee85acbd71fc9d9507d688/docker-compose.yaml
 docker compose up -d
 ```
 
-This exposes mcpjungle's streamable http mcp server at `http://localhost:8080/mcp` by default.
+The download is pinned to this fork's hardened configuration. If you already
+cloned this repository, use its checked-in `docker-compose.yaml` directly instead.
+
+By default, the gateway is available on this machine at `http://127.0.0.1:8080/mcp`,
+and PostgreSQL is published only on `127.0.0.1:5432`. Development mode has no
+authentication; keep these defaults for local use. For deliberate remote access,
+see [Running inside Docker](#running-inside-docker).
 
 ### Add an MCP server
 1. Download the `mcpjungle` CLI on your local machine either using brew or directly from the [Releases Page](https://github.com/mcpjungle/MCPJungle/releases).
