@@ -43,12 +43,18 @@ jobs:
                 if [ "$test_status" -eq 0 ]; then test_status=1; fi
               fi
             fi
+            if [ -d "$test_root/modules" ]; then
+              if ! chmod -R u+w "$test_root/modules"; then
+                if [ "$test_status" -eq 0 ]; then test_status=1; fi
+              fi
+            fi
             if ! rm -rf -- "$test_root"; then
               if [ "$test_status" -eq 0 ]; then test_status=1; fi
             fi
             exit "$test_status"
           }
           trap cleanup EXIT
+          trap 'exit 129' HUP
           trap 'exit 130' INT
           trap 'exit 143' TERM
           mkdir -p "$test_root/tmp" "$test_root/modules" "$test_root/build" "$test_root/gopath"
