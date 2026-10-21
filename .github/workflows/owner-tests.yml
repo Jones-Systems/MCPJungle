@@ -21,13 +21,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: Jones-Systems/Codex-V3
-          ref: a1e875f001f374ab800863401a2af42eb71566b6
-          path: .qualification-input/adapter
-          sparse-checkout: tools/mcpjungle
-          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.5'
@@ -35,9 +28,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
       - name: Test with isolated module, build and temporary state
         shell: bash
         run: |
@@ -76,10 +66,6 @@ jobs:
           mkdir -p "$dashboard_output"
           cp -R "$test_root/dashboard/dist/." "$dashboard_output/"
           go test -mod=readonly -count=1 -p=1 -parallel=1 -timeout=12m ./...
-          export MCPJUNGLE_QUALIFICATION_ADAPTER="$PWD/.qualification-input/adapter/tools/mcpjungle/stdio_adapter.py"
-          export MCPJUNGLE_QUALIFICATION_PYTHON="$(command -v python)"
-          export MCPJUNGLE_QUALIFICATION_RECEIPT="$RUNNER_TEMP/mcpjungle-eof-receipt.json"
-          go test -mod=readonly -tags=qualification -count=1 -p=1 -parallel=1 -timeout=3m ./internal/api -run '^TestRegistrationOwnedAdapterEOFQualification$' -v
           if [ "${{ runner.os }}" = Linux ]; then
             mkdir -p "$test_root/integration" "$test_root/integration-home"
             git archive HEAD | tar -x -C "$test_root/integration"
@@ -89,9 +75,3 @@ jobs:
               timeout --signal=TERM --kill-after=10s 6m \
               bash "$test_root/integration/scripts/test-mcpjungle.sh"
           fi
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: eof-receipt-${{ matrix.os }}
-          path: ${{ runner.temp }}/mcpjungle-eof-receipt.json
-          if-no-files-found: warn

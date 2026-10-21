@@ -34,11 +34,13 @@ Linux `/proc` assumptions are not portable to macOS. Registration contract 1
 and capability checks remain the compatibility boundary. No database or
 journal schema migration is introduced for Darwin support.
 
-The CI qualification pair pins the adapter to Codex-V3 commit
+The native qualification pair pins the adapter to Codex-V3 commit
 `a1e875f001f374ab800863401a2af42eb71566b6`. An adapter revision change
 requires new paired qualification; a gateway-only unit test does not replace
-it. The ordinary Go suite excludes the observation bridge. CI separately runs
-the `qualification`-tag API test with explicit adapter, Python and receipt paths.
+it. The ordinary Go suite excludes the observation bridge. Paired CI belongs
+to the adapter repository, which checks out this public gateway at an exact
+revision and runs the `qualification`-tag API test with explicit adapter,
+Python and receipt paths. Gateway CI needs no cross-repository credential.
 
 Mac qualification must distinguish transport-owned backend waits,
 frontend-owned waits, terminal registration state, and journal retirement.
