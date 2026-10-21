@@ -58,13 +58,16 @@ jobs:
           export GOPATH="$test_root/gopath"
           export GOENV=off GOWORK=off GOTOOLCHAIN=local GOMAXPROCS=2
           export OTEL_SDK_DISABLED=true OTEL_ENABLED=false
-          cp -R web/dashboard "$test_root/dashboard"
-          npm ci --prefix "$test_root/dashboard"
-          npm run build --prefix "$test_root/dashboard"
+          mkdir -p "$test_root/web" "$test_root/assets"
+          cp -R web/dashboard "$test_root/web/dashboard"
+          cp assets/logo.png "$test_root/assets/logo.png"
+          export npm_config_cache="$test_root/npm"
+          npm ci --prefix "$test_root/web/dashboard"
+          npm run build --prefix "$test_root/web/dashboard"
           test ! -e "$dashboard_output"
           dashboard_created=1
           mkdir -p "$dashboard_output"
-          cp -R "$test_root/dashboard/dist/." "$dashboard_output/"
+          cp -R "$test_root/web/dashboard/dist/." "$dashboard_output/"
           go test -mod=readonly -count=1 -p=1 -parallel=1 -timeout=12m ./...
           if [ "${{ runner.os }}" = Linux ]; then
             mkdir -p "$test_root/integration" "$test_root/integration-home"
