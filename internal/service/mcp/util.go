@@ -393,6 +393,11 @@ func captureStdioServerStderr(name string, c *client.Client) {
 func runStdioServer(ctx context.Context, s *model.McpServer, initReqTimeoutSec int) (*client.Client, error) {
 	return runStdioServerLifetime(ctx, s, initReqTimeoutSec, false)
 }
+
+// Command factories preserve the two lifetimes and let package tests observe the SDK-owned Wait.
+var registrationCommandContext = exec.CommandContext
+var registrationCommand = exec.Command
+
 func runRegistrationStdioServer(ctx context.Context, s *model.McpServer, initReqTimeoutSec int) (*client.Client, error) {
 	return runStdioServerLifetime(ctx, s, initReqTimeoutSec, true)
 }
@@ -412,9 +417,11 @@ func runStdioServerLifetime(ctx context.Context, s *model.McpServer, initReqTime
 
 	stdio := transport.NewStdioWithOptions(conf.Command, envVars, conf.Args, transport.WithCommandFunc(func(_ context.Context, command string, env, args []string) (*exec.Cmd, error) {
 		// Successful stateful sessions outlive one request; initialization cancellation closes explicitly.
-		cmd := exec.Command(command, args...)
+		var cmd *exec.Cmd
 		if requestLifetime {
-			cmd = exec.CommandContext(ctx, command, args...)
+			cmd = registrationCommandContext(ctx, command, args...)
+		} else {
+			cmd = registrationCommand(command, args...)
 		}
 		cmd.Env = append(os.Environ(), env...)
 		return cmd, nil
