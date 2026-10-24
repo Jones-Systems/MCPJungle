@@ -152,6 +152,27 @@ removed that exact root after success; the small JSONL result remains as durable
 local evidence. No host tools or services were installed or reconfigured.
 
 The Astra/max initial planner independently agreed that all tests should stay.
-Final sensitive-area Astra/xhigh bulk review is pending. No production or test
-source changes are planned, so repeated application builds after documentation
-edits are not required.
+The final independent bulk review requested Astra/xhigh because authorization,
+durable state, cleanup, and shipped regression coverage are involved. Native
+result `MCPJ-RS-BULK-20261024-f9741aa/result-1` from `/root/bulk_review` binds to
+`f9741aaea9480165e5d348f2fca46e5333ed85b7`; effective backend identity was not
+independently verified. The reviewer inspected all eleven owned test files,
+Jones hunks in the two upstream files, adjacent lifecycle contracts, both new
+documents, and the baseline JSONL. It confirmed the ownership/counts and found
+**no restores and no substantive coverage gaps**.
+
+The baseline JSONL SHA-256 is
+`6a7d635f8a6c3f8269fd1ad383ec15ddeb131037acaa1965cd4530010b853921`.
+No production or test source changed, so repeated application builds after
+documentation edits are not required. Documentation paths, changed-file scope,
+unchanged tests/workflows, evidence counts, and `git diff --check` passed.
+
+| Review finding | Severity / blocking effect | Disposition |
+| --- | --- | --- |
+| `MCPJ-RS-BULK-001`: the CI table calls 7.08 minutes "unrounded," although 425 seconds is 7.083333... minutes and the displayed number is rounded to two decimals | P4 / none | Deferred under the rule requiring explicit owner direction for P2-P4 review changes; exact seconds and this clarification preserve the evidence. No test or CI behavior is affected. |
+
+Publication is [PR #6](https://github.com/Jones-Systems/MCPJungle/pull/6), a
+documentation-only PR against the fork's main branch. No removal-only or CI
+behavior PR was manufactured for this pass. Required/advisory automated check
+sets remain empty while main has no workflow. The outstanding workflow slice
+above remains outside this lane's ownership.
