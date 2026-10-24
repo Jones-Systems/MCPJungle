@@ -176,3 +176,58 @@ documentation-only PR against the fork's main branch. No removal-only or CI
 behavior PR was manufactured for this pass. Required/advisory automated check
 sets remain empty while main has no workflow. The outstanding workflow slice
 above remains outside this lane's ownership.
+
+
+## PR #5 integration reconciliation
+
+M Jones explicitly authorized merging PR #5 after assessing intervening
+MCPJungle changes, accepting the previously reported approximately 3.5-minute
+cold CI jobs. This approval covers the bounded PR update and normal merge into
+`Jones-Systems/MCPJungle:main`; it excludes fork detachment, branch deletion,
+release, installation, host changes, and upstream publication. The owner will
+perform GitHub's built-in fork detachment separately.
+
+Current main `202c1c12b07cc435df7b5bee566e5fed7bbeab9e` adds only root
+instructions and this audit note after the original PR #5 base. No application
+code, tests, or dependency versions changed. The PR head
+`0f6f3fc9ee32d37560aa97142304a4586d7e1968` had successful Linux/macOS CI and
+no review threads. A normal merge brings those main changes into the PR before
+qualification, preserving its exact gateway revision in history for adapter
+consumers. Root coordinator thread `4834de80-6d48-4a0b-bb8a-deabfe633a27`
+is the sole Git owner in the isolated `pr5-integration-20261024` worktree;
+`pr5_ci` edits only workflows and their extracted runner. The root owns this
+note, root instructions, publication, and merge.
+
+The workflow follow-up above is addressed in this integration: required Linux
+Go tests, path-gated advisory macOS checks, scheduled/manual advisory shell
+integration, and PR concurrency cancellation. All ordinary Go tests remain in
+the Linux check. The existing fast Go integration package remains there;
+slow external shell qualification has its own advisory trigger. Root AGENTS.md
+declares the exact names. The existing cleanup lifecycle is retained through
+an extracted shared runner, with no behavior/test source changes.
+
+Acceptance is successful updated-head Linux and relevant macOS checks,
+source/syntax verification of workflow routing and cleanup preservation, and a
+normal expected-head merge with direct main/PR readback. No human review is
+claimed: the owner explicitly directed proceeding after the prior report of
+that checklist item. This does not represent a completed human code review. Native GitHub review rules remain enforced.
+
+Verification and final merge identity are recorded below when known.
+
+
+Current native invocation identity is Jones Code environment
+`6ec33bac-c2bb-4418-b6c6-c2515a13e8b5`, native thread
+`4834de80-6d48-4a0b-bb8a-deabfe633a27`. Registration has not been submitted:
+the enrolled host/project binding for this cross-repository note is not
+established; no registry enrollment or native project reassignment is attempted.
+
+
+The updated CI source passes Bash syntax, YAML parsing/structural checks, and
+`git diff --check`; actionlint is unavailable. One serial fake-dependency probe
+of the exact extracted runner verifies success cleanup (exit 0), failure-code
+preservation (exit 37), preexisting dashboard preservation (exit 1), handled
+SIGTERM cleanup (exit 143), and concurrent isolated checkouts. Each invocation's
+scratch and generated output disappeared, and the outer TemporaryDirectory was
+verified removed. No real Go/npm build ran locally; updated-head platform
+qualification runs in GitHub Actions. Probe admission was 18.5% CPU use and
+33.82 GiB available RAM, with one core 6.25% of host capacity.

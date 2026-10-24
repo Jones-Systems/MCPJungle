@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package cmd
 
@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 )
 
 type registrationGuard struct{ file *os.File }
@@ -26,7 +25,7 @@ func acquireRegistrationGuard(dsn, path string) (*registrationGuard, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err = lockRegistrationGuard(int(file.Fd())); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("registration database already has a writer: %w", err)
 	}

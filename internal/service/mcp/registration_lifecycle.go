@@ -52,7 +52,7 @@ func newRegistrationCoordinator(c *ServiceConfig) *registrationCoordinator {
 	r.gate <- struct{}{}
 	r.createSlot <- struct{}{}
 	r.storage = c.DB.Migrator().HasTable(&model.RegistrationLifecycle{})
-	r.enabled = r.storage && runtime.GOOS == "linux" && c.DB.Dialector.Name() == "sqlite" && c.RegistrationSingleWriter
+	r.enabled = r.storage && registrationPlatformSupported(runtime.GOOS) && c.DB.Dialector.Name() == "sqlite" && c.RegistrationSingleWriter
 	if r.enabled {
 		var databases []struct {
 			Name string
@@ -461,7 +461,10 @@ func (m *MCPService) ResolveRegistration(ctx context.Context, name string, input
 		return "", fmt.Errorf("registration cleanup pending")
 	}
 	if err = m.closeRegistrationSession(ctx, name); err != nil {
-		m.recordClientCleanupFailure(name, err)
+		var closeErr *registrationSessionCloseError
+		if errors.As(err, &closeErr) {
+			m.recordClientCleanupFailure(name, err)
+		}
 		return "", err
 	}
 	var s model.McpServer
@@ -612,10 +615,17 @@ func (m *MCPService) DeregisterMcpServerContext(ctx context.Context, name string
 		return fmt.Errorf("registration cleanup pending")
 	}
 	if err = m.closeRegistrationSession(ctx, name); err != nil {
-		m.recordClientCleanupFailure(name, err)
+		var closeErr *registrationSessionCloseError
+		if errors.As(err, &closeErr) {
+			m.recordClientCleanupFailure(name, err)
+		}
 		return err
 	}
 	if err = m.removeManagedRows(ctx, row); err != nil {
+		// A canceled read or rolled-back transaction leaves the existing fence retryable.
+		if ctx.Err() != nil && err == ctx.Err() {
+			return err
+		}
 		recordCtx, recordCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer recordCancel()
 		persistErr := m.db.WithContext(recordCtx).Model(&model.RegistrationLifecycle{}).Where("name = ?", name).Updates(map[string]any{"state": "cleanup_failed", "cleanup_pending": true}).Error
@@ -695,10 +705,18 @@ func (m *MCPService) removeManagedRows(ctx context.Context, row *model.Registrat
 		uris[i] = r.URI
 	}
 	m.mcpProxyServer.DeleteResources(uris...)
-	return ctx.Err()
+	return nil
 }
 
+type registrationSessionCloseError struct{ err error }
+
+func (e *registrationSessionCloseError) Error() string { return e.err.Error() }
+func (e *registrationSessionCloseError) Unwrap() error { return e.err }
+
 func (m *MCPService) closeRegistrationSession(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	sm := m.sessionManager
 	for !sm.mu.TryLock() {
 		select {
@@ -708,15 +726,18 @@ func (m *MCPService) closeRegistrationSession(ctx context.Context, name string) 
 		}
 	}
 	defer sm.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if session := sm.sessions[name]; session != nil {
 		if session.Client != nil {
 			if err := session.Client.Close(); err != nil {
-				return err
+				return &registrationSessionCloseError{err: err}
 			}
 		}
 		delete(sm.sessions, name)
 	}
-	return ctx.Err()
+	return nil
 }
 
 func (m *MCPService) ShutdownRegistrations(ctx context.Context) error {
