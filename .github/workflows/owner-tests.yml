@@ -1,0 +1,86 @@
+name: Owner fork tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go-tests:
+    name: Go tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test with isolated module, build and temporary state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_root="$(mktemp -d "$RUNNER_TEMP/mcpjungle-tests.XXXXXX")"
+          dashboard_output="$PWD/internal/dashboardui/dist"
+          dashboard_created=0
+          cleanup() {
+            test_status=$?
+            trap - EXIT
+            if [ "$dashboard_created" -eq 1 ]; then
+              if ! rm -rf -- "$dashboard_output"; then
+                if [ "$test_status" -eq 0 ]; then test_status=1; fi
+              fi
+            fi
+            if [ -d "$test_root/modules" ]; then
+              if ! chmod -R u+w "$test_root/modules"; then
+                if [ "$test_status" -eq 0 ]; then test_status=1; fi
+              fi
+            fi
+            if ! rm -rf -- "$test_root"; then
+              if [ "$test_status" -eq 0 ]; then test_status=1; fi
+            fi
+            exit "$test_status"
+          }
+          trap cleanup EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          mkdir -p "$test_root/tmp" "$test_root/modules" "$test_root/build" "$test_root/gopath"
+          export TMPDIR="$test_root/tmp"
+          export GOMODCACHE="$test_root/modules"
+          export GOCACHE="$test_root/build"
+          export GOPATH="$test_root/gopath"
+          export GOENV=off GOWORK=off GOTOOLCHAIN=local GOMAXPROCS=2
+          export OTEL_SDK_DISABLED=true OTEL_ENABLED=false
+          mkdir -p "$test_root/web" "$test_root/assets"
+          cp -R web/dashboard "$test_root/web/dashboard"
+          cp assets/logo.png "$test_root/assets/logo.png"
+          export npm_config_cache="$test_root/npm"
+          npm ci --prefix "$test_root/web/dashboard"
+          npm run build --prefix "$test_root/web/dashboard"
+          test ! -e "$dashboard_output"
+          dashboard_created=1
+          mkdir -p "$dashboard_output"
+          cp -R "$test_root/web/dashboard/dist/." "$dashboard_output/"
+          go test -mod=readonly -count=1 -p=1 -parallel=1 -timeout=12m ./...
+          if [ "${{ runner.os }}" = Linux ]; then
+            mkdir -p "$test_root/integration" "$test_root/integration-home"
+            git archive HEAD | tar -x -C "$test_root/integration"
+            mkdir -p "$test_root/integration/internal/dashboardui/dist"
+            cp -R "$dashboard_output/." "$test_root/integration/internal/dashboardui/dist/"
+            env HOME="$test_root/integration-home" npm_config_cache="$test_root/npm" \
+              timeout --signal=TERM --kill-after=10s 6m \
+              bash "$test_root/integration/scripts/test-mcpjungle.sh"
+          fi

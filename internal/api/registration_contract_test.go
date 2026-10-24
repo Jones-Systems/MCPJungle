@@ -18,6 +18,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/mcpjungle/mcpjungle/internal/migrations"
 	"github.com/mcpjungle/mcpjungle/internal/model"
+	"github.com/mcpjungle/mcpjungle/internal/service/config"
 	"github.com/mcpjungle/mcpjungle/internal/service/mcp"
 	"github.com/mcpjungle/mcpjungle/internal/telemetry"
 	"gorm.io/gorm"
@@ -41,13 +42,22 @@ func registrationAPIFixture(t *testing.T, guard bool, seeds ...func(*gorm.DB)) *
 	for _, seed := range seeds {
 		seed(db)
 	}
-	svc, err := mcp.NewMCPService(&mcp.ServiceConfig{DB: db, RegistrationSingleWriter: guard, McpServerInitReqTimeout: 2, McpProxyServer: server.NewMCPServer("fixture", "1"), SseMcpProxyServer: server.NewMCPServer("sse", "1"), Metrics: telemetry.NewNoopCustomMetrics(), SessionManager: mcp.NewSessionManager(&mcp.SessionManagerConfig{DB: db, IdleTimeoutSec: 0, InitReqTimeoutSec: 2})})
+	proxy := server.NewMCPServer("fixture", "1", server.WithToolCapabilities(false))
+	svc, err := mcp.NewMCPService(&mcp.ServiceConfig{DB: db, RegistrationSingleWriter: guard, McpServerInitReqTimeout: 2, McpProxyServer: proxy, SseMcpProxyServer: server.NewMCPServer("sse", "1"), Metrics: telemetry.NewNoopCustomMetrics(), SessionManager: mcp.NewSessionManager(&mcp.SessionManagerConfig{DB: db, IdleTimeoutSec: 0, InitReqTimeoutSec: 2})})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = svc.ShutdownRegistrations(context.Background()); svc.Shutdown(); _ = sql.Close() })
-	s := &Server{mcpService: svc}
+	configuration := config.NewServerConfigService(db)
+	if _, err := configuration.Init(model.ModeDev); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{mcpService: svc, configService: configuration}
 	router := gin.New()
+	router.Any("/mcp", s.requireInitialized(), s.checkAuthForMcpProxyAccess(), gin.WrapH(server.NewStreamableHTTPServer(proxy)))
+	router.GET("/api/v0/servers", s.listServersHandler())
+	router.GET("/api/v0/prompts", s.listPromptsHandler())
+	router.GET("/api/v0/resources", s.listResourcesHandler())
 	router.GET("/api/v0/capabilities", s.registrationCapabilitiesHandler())
 	router.GET("/api/v0/registration-status", s.registrationStatusHandler())
 	router.POST("/api/v0/servers", s.registerServerHandler())
@@ -136,7 +146,9 @@ func TestRegistrationAPIStdioFixture(t *testing.T) {
 		}
 		if req.Method == "tools/list" {
 			_ = os.WriteFile(filepath.Join(os.Getenv("MCPJUNGLE_API_ROOT"), "listing"), []byte("1"), 0600)
-			select {}
+			for {
+				time.Sleep(time.Hour)
+			}
 		}
 		result := map[string]any{"protocolVersion": "2025-03-26", "serverInfo": map[string]string{"name": "fixture", "version": "1"}, "capabilities": map[string]any{"tools": map[string]any{}}}
 		response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
