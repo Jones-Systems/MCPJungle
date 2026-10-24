@@ -15,10 +15,17 @@ from behavior changes, with reasons and the coverage that remains.
 
 ## Checks and CI budget
 
-At the October 24, 2026 audit baseline (`ffa61c9`), main has no GitHub Actions
-workflows. Required automated checks: **none**. Advisory automated checks:
-**none**. A check belonging only to an unmerged PR is not a gate for another PR.
-The workflow proposed in PR #5 is pending and is not installed on main.
+Required automated check: **`Go tests (Linux)`**, on every pull request and
+main push. It runs the complete ordinary Go suite, including its fast
+integration package (about 28 seconds of test execution in the qualification
+baseline).
+
+Advisory automated checks: **`Native Go tests (macOS)`** and
+**`Shell integration (Linux)`**. Native Go checks run for platform-relevant
+PR/main changes and on manual qualification. Shell integration runs
+on scheduled/manual qualification. Both workflows support manual dispatch.
+The workflows use concurrency cancellation for superseded PR runs. These names
+are source policy; this change does not configure branch protection.
 
 For Go behavior changes, build the dashboard assets needed by
 `internal/dashboardui/embed.go`, then run the affected Go tests and the normal
@@ -40,5 +47,5 @@ jobs to the platform paths they prove. Place slow or native qualification on
 nightly, manual, label, or relevant path triggers, preserving a suitable trigger
 for every test. Measure runner minutes and queue time separately.
 
-The audit and pending workflow follow-up are recorded in
+The audit and workflow reconciliation are recorded in
 [the right-sizing work note](owner-plans/test-right-sizing-20261024.md).
